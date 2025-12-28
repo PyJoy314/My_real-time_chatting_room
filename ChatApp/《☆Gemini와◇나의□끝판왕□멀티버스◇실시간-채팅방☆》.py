@@ -204,7 +204,13 @@ def handle_msg(data):
         emit('message', {'msg': "!잔액, !저금 [금액], !출금 [금액], !랭킹, !가위바위보 [패] [금액], !매수 비트코인 [금액], !무한뇌절, !뇌절중단, !gemini [질문]", 'type': 'system'})
 
     else:
-        total = user['money'] + user['bank_money']
+        # 비트코인 현재 가치를 계산합니다 (개수 * 시세)
+        btc_val = int(user['btc_amount'] * crypto_prices['비트코인'])
+        
+        # 현금 + 은행잔고 + 비트코인 가치를 모두 합산합니다
+        total = user['money'] + user['bank_money'] + btc_val
+        
+        # 합산된 금액을 기준으로 등급을 판정합니다
         rank = "초월자" if total >= 10000000 else "VIP" if total >= 1000000 else "평민"
         # DB에 채팅 기록 저장
         with sqlite3.connect(DB_FILE) as conn:
@@ -215,3 +221,4 @@ if __name__ == '__main__':
     init_db()
     threading.Thread(target=background_scheduler, daemon=True).start()
     socketio.run(app, host='0.0.0.0', port=PORT, debug=False)
+
