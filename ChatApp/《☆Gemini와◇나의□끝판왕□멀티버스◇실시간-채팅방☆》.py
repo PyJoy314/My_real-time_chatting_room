@@ -178,7 +178,9 @@ def handle_msg(data):
 
     elif cmd == "!랭킹":
         with sqlite3.connect(DB_FILE) as conn:
-            rows = conn.execute("SELECT nickname, (money + bank_money) as total FROM users ORDER BY total DESC LIMIT 10").fetchall()
+            # 여기에도 btc_amount * 현재시세 로직을 태워야 합니다!
+            price = crypto_prices['비트코인']
+            rows = conn.execute(f"SELECT nickname, (money + bank_money + CAST(btc_amount * {price} AS INTEGER)) as total FROM users ORDER BY total DESC LIMIT 10").fetchall()
             res = "🏆 [제국 부자 순위]\n" + "\n".join([f"{i+1}위: {r[0]} ({r[1]:,}₩)" for i, r in enumerate(rows)])
             emit('message', {'msg': res, 'type': 'system'})
 
@@ -221,4 +223,5 @@ if __name__ == '__main__':
     init_db()
     threading.Thread(target=background_scheduler, daemon=True).start()
     socketio.run(app, host='0.0.0.0', port=PORT, debug=False)
+
 
