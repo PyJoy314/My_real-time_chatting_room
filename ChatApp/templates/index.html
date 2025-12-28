@@ -3,13 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Empire Master</title>
+    <title>Ultimate Multiverse Chat</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
+        @keyframes floating { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-10px) rotate(180deg); } }
+        @keyframes neon-pulse { 0%, 100% { box-shadow: 0 0 5px #22d3ee, 0 0 10px #22d3ee; } 50% { box-shadow: 0 0 20px #22d3ee, 0 0 30px #0891b2; } }
+        
         body { background: #020617; color: #f1f5f9; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         #chat { flex-grow: 1; overflow-y: auto; padding: 1.5rem; background: radial-gradient(circle at center, #0f172a 0%, #020617 100%); }
-        .rank-초월자 { color: #22d3ee; text-shadow: 0 0 15px #0891b2; font-weight: 900; }
+        
+        /* 초월자 특수 효과 */
+        .rank-초월자 { 
+            background: linear-gradient(to right, #22d3ee, #ffffff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 900;
+            text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
+        }
+        .diamond-icon { display: inline-block; animation: floating 3s ease-in-out infinite; filter: drop-shadow(0 0 5px #22d3ee); }
+        .neon-bubble { border: 2px solid #22d3ee !important; animation: neon-pulse 2s infinite; }
+        
         .link { color: #22d3ee; text-decoration: underline; font-weight: bold; }
         .reward-badge { background: #065f46; color: #34d399; font-size: 0.7rem; padding: 2px 8px; border-radius: 20px; margin-left: 8px; font-weight: bold; }
         #chat::-webkit-scrollbar { width: 5px; }
@@ -17,19 +31,22 @@
     </style>
 </head>
 <body>
-    <header class="p-4 bg-slate-900 border-b border-cyan-500/30 flex justify-between items-center shadow-xl">
-        <h1 class="text-cyan-400 font-black italic">ULTIMATE MASTER EMPIRE</h1>
-        <div id="status" class="text-[10px] text-slate-500 font-mono">ENCRYPTED CONNECTION</div>
+    <header class="p-4 bg-slate-900 border-b border-cyan-500/30 flex justify-between items-center shadow-2xl">
+        <h1 class="text-cyan-400 font-black italic tracking-tighter text-xl">ULTIMATE MULTIVERSE EMPIRE</h1>
+        <div id="status" class="text-[10px] text-cyan-500 font-mono animate-pulse">SYSTEM ONLINE</div>
     </header>
 
     <div id="chat"></div>
 
     <div class="p-4 bg-slate-900 border-t border-slate-800">
         <div id="f-info" class="text-[10px] text-cyan-400 mb-2 hidden animate-pulse"></div>
-        <textarea id="msg" class="w-full bg-black/50 text-white p-4 rounded-2xl border border-slate-700 focus:border-cyan-500 outline-none mb-3" rows="2" placeholder="메세지, 링크, 명령어 입력..."></textarea>
+        <textarea id="msg" class="w-full bg-black/50 text-white p-4 rounded-2xl border border-slate-700 focus:border-cyan-500 outline-none mb-3 transition-all" rows="2" placeholder="메시지 입력 시 자동 적립..."></textarea>
         <div class="flex gap-2">
-            <label class="bg-slate-800 p-4 rounded-2xl text-xs cursor-pointer flex items-center">📁 파일공유<input type="file" id="f-in" class="hidden" onchange="showFile()"></label>
-            <button onclick="send()" class="flex-grow bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl font-black transition-all active:scale-95">제국 전송</button>
+            <label class="bg-slate-800 p-4 rounded-2xl text-xs cursor-pointer flex items-center hover:bg-slate-700 transition-colors">
+                📁 파일공유
+                <input type="file" id="f-in" class="hidden" onchange="showFile()">
+            </label>
+            <button onclick="send()" class="flex-grow bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl font-black shadow-lg shadow-cyan-900/50 transition-all active:scale-95">제국 데이터 전송</button>
         </div>
     </div>
 
@@ -48,19 +65,22 @@
             div.className = "mb-6 animate-in fade-in slide-in-from-bottom-2 duration-300";
             
             if (d.type === 'noejul') {
-                div.innerHTML = `<div class="p-3 bg-fuchsia-950/20 border border-fuchsia-500/30 text-fuchsia-300 rounded-lg text-xs italic">${d.msg}</div>`;
+                div.innerHTML = `<div class="p-2 bg-fuchsia-950/20 border border-fuchsia-500/30 text-fuchsia-300 rounded-lg text-xs italic text-center">${d.msg}</div>`;
             } else if (d.type === 'system' || d.type === 'bot') {
-                div.innerHTML = `<div class="bg-slate-800/50 border border-slate-700 text-cyan-300 text-xs p-4 rounded-2xl whitespace-pre-wrap">${linkify(d.msg)}</div>`;
+                div.innerHTML = `<div class="bg-slate-800/50 border border-slate-700 text-cyan-300 text-xs p-4 rounded-2xl whitespace-pre-wrap font-mono">${linkify(d.msg)}</div>`;
             } else {
                 const isMe = d.nickname === nick;
+                const isTranscendent = d.rank === '초월자';
                 div.innerHTML = `
                     <div class="flex flex-col ${isMe ? 'items-end' : ''}">
                         <div class="flex items-center mb-1">
-                            <span class="text-[10px] text-slate-500 font-bold">${d.nickname}</span>
+                            ${isTranscendent ? '<span class="diamond-icon mr-1">💎</span>' : ''}
+                            <span class="text-[10px] ${isTranscendent ? 'rank-초월자' : 'text-slate-500'} font-bold">${d.nickname}</span>
+                            <span class="text-[9px] ml-1 text-slate-600">[${d.rank}]</span>
                             <span class="reward-badge">${d.reward}</span>
                         </div>
-                        <div class="bg-slate-800/80 p-4 rounded-2xl max-w-[90%] whitespace-pre-wrap border border-slate-700 ${d.rank === '초월자' ? 'border-cyan-400' : ''}">
-                            <span class="rank-${d.rank} text-sm">${linkify(d.msg)}</span>
+                        <div class="bg-slate-800/80 p-4 rounded-2xl max-w-[85%] whitespace-pre-wrap border border-slate-700 ${isTranscendent ? 'neon-bubble' : ''}">
+                            <span class="${isTranscendent ? 'rank-초월자' : ''} text-sm">${linkify(d.msg)}</span>
                         </div>
                     </div>`;
             }
@@ -70,7 +90,7 @@
 
         function showFile() {
             const f = document.getElementById('f-in').files[0];
-            if(f) { document.getElementById('f-info').innerText = `✅ 파일 감지: ${f.name}`; document.getElementById('f-info').classList.remove('hidden'); }
+            if(f) { document.getElementById('f-info').innerText = `✅ 파일 준비됨: ${f.name}`; document.getElementById('f-info').classList.remove('hidden'); }
         }
 
         async function send() {
