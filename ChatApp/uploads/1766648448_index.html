@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini 멀티버스 채팅방 (VIP Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { background: #111827; color: #e5e7eb; }
+        #chat-window { height: 70vh; overflow-y: auto; scroll-behavior: smooth; }
+        
+        /* ⭐ 사용자님 커스텀: 줄바꿈 유지 */
+        .msg-item { 
+            white-space: pre-wrap !important; 
+            word-break: break-all; 
+            padding: 10px; 
+            border-bottom: 1px solid #1f2937; 
+        }
+
+        /* 💎 VIP 네온 효과 */
+        .vip-text {
+            color: #fff;
+            text-shadow: 0 0 7px #fff, 0 0 10px #818cf8, 0 0 21px #818cf8;
+            font-weight: bold;
+            animation: blink 1.5s infinite alternate;
+        }
+        @keyframes blink { from { opacity: 0.9; } to { opacity: 1; } }
+
+        /* 📊 뉴스 효과 */
+        .news-msg { color: #facc15; font-weight: bold; background: #451a03; padding: 5px; border-radius: 4px; }
+        
+        .bot-msg { color: #38bdf8; background: #1e293b; padding: 10px; border-left: 4px solid #38bdf8; }
+        .nickname { font-weight: bold; color: #818cf8; margin-right: 5px; }
+        a { color: #60a5fa; text-decoration: underline; }
+    </style>
+</head>
+<body class="p-4">
+    <div class="max-w-5xl mx-auto">
+        <div id="chat-window" class="bg-gray-900 rounded-lg p-4 mb-4 border border-gray-700 shadow-2xl"></div>
+        
+        <div class="bg-gray-800 p-4 rounded-lg">
+            <textarea id="user-input" class="w-full p-3 bg-gray-700 rounded mb-2 h-24 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="재벌이 될 준비가 되셨나요?"></textarea>
+            <div class="flex justify-between items-center">
+                <div class="flex gap-2">
+                    <input type="file" id="file-btn" class="hidden" onchange="uploadFile()">
+                    <button onclick="document.getElementById('file-btn').click()" class="bg-gray-600 px-4 py-2 rounded hover:bg-gray-500">📁 파일 공유</button>
+                    <span id="up-status" class="text-xs text-gray-400 self-center"></span>
+                </div>
+                <button onclick="send()" class="bg-indigo-600 px-10 py-2 rounded font-bold hover:bg-indigo-500 transition-all">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const nick = prompt("닉네임을 입력하세요") || "익명_" + Math.floor(Math.random()*1000);
+        socket.emit('join', {nickname: nick});
+
+        function linkify(text) {
+            const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+            return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
+        }
+
+        socket.on('message', (data) => {
+            const win = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = 'msg-item';
+            
+            if (data.type === 'news') {
+                div.innerHTML = `<div class="news-msg">${data.msg}</div>`;
+            } else if (data.type === 'system') {
+                div.innerHTML = `<span style="color: #9ca3af;">${data.msg}</span>`;
+            } else if (data.type === 'bot') {
+                div.innerHTML = `<div class="bot-msg">${linkify(data.msg)}</div>`;
+            } else {
+                const vipClass = data.is_vip ? 'vip-text' : '';
+                const content = data.type === 'file' ? data.msg : linkify(data.msg);
+                div.innerHTML = `<span class="nickname">${data.nickname}</span>: <span class="${vipClass}">${content}</span>`;
+            }
+            
+            win.appendChild(div);
+            win.scrollTop = win.scrollHeight;
+        });
+
+        function send() {
+            const input = document.getElementById('user-input');
+            if(input.value.trim()) {
+                socket.emit('send_msg', {nickname: nick, msg: input.value});
+                input.value = '';
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('file-btn');
+            if(!fileInput.files[0]) return;
+            const status = document.getElementById('up-status');
+            status.innerText = "⏳ 업로드 중...";
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('nickname', nick);
+            const res = await fetch('/upload', { method: 'POST', body: formData });
+            status.innerText = res.ok ? "✅ 완료" : "❌ 실패";
+            fileInput.value = '';
+        }
+
+        document.getElementById('user-input').addEventListener('keydown', (e) => {
+            if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+    </script>
+</body>
+</html>

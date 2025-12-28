@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini 멀티버스 최종본</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { background: #111827; color: #e5e7eb; }
+        #chat-window { height: 70vh; overflow-y: auto; scroll-behavior: smooth; }
+        /* 🌟 대용량 텍스트 줄바꿈 유지 (핵심) */
+        .msg-item { 
+            white-space: pre-wrap; 
+            word-break: break-all; 
+            padding: 8px; 
+            border-bottom: 1px solid #1f2937; 
+        }
+        .msg-item a { color: #60a5fa; text-decoration: underline; }
+    </style>
+</head>
+<body class="p-4">
+    <div class="max-w-5xl mx-auto">
+        <div id="chat-window" class="bg-gray-900 rounded-lg p-4 mb-4 border border-gray-700"></div>
+        
+        <div class="bg-gray-800 p-4 rounded-lg shadow-xl">
+            <textarea id="user-input" class="w-full p-3 bg-gray-700 rounded mb-2 h-24" placeholder="메시지 입력... (!적립, !도박, !gemini 사용 가능)"></textarea>
+            <div class="flex justify-between">
+                <div>
+                    <input type="file" id="file-btn" class="hidden" onchange="uploadFile()">
+                    <button onclick="document.getElementById('file-btn').click()" class="bg-gray-600 px-4 py-2 rounded">📁 파일 공유</button>
+                    <span id="up-status" class="text-xs ml-2 text-gray-400"></span>
+                </div>
+                <button onclick="send()" class="bg-indigo-600 px-10 py-2 rounded font-bold hover:bg-indigo-500">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const nick = prompt("닉네임을 입력하세요") || "익명_" + Math.floor(Math.random()*1000);
+        socket.emit('join', {nickname: nick});
+
+        // 🌟 링크 자동 변환
+        function linkify(text) {
+            const urlPattern = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+            return text.replace(urlPattern, '<a href="$1" target="_blank">$1</a>');
+        }
+
+        socket.on('message', (data) => {
+            const win = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = 'msg-item';
+            
+            // 파일 링크가 포함된 경우와 일반 텍스트 구분
+            if (data.msg.includes('<a href=')) { div.innerHTML = data.msg; }
+            else { div.innerHTML = linkify(data.msg); }
+            
+            win.appendChild(div);
+            win.scrollTop = win.scrollHeight;
+        });
+
+        function send() {
+            const input = document.getElementById('user-input');
+            if(input.value.trim()) {
+                socket.emit('send_msg', {nickname: nick, msg: input.value});
+                input.value = '';
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('file-btn');
+            if(!fileInput.files[0]) return;
+            const status = document.getElementById('up-status');
+            status.innerText = "⏳ 업로드 중...";
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('nickname', nick);
+
+            const res = await fetch('/upload', { method: 'POST', body: formData });
+            status.innerText = res.ok ? "✅ 완료" : "❌ 실패";
+            fileInput.value = '';
+        }
+
+        document.getElementById('user-input').addEventListener('keydown', (e) => {
+            if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,284 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 멀티버스 채팅방 (Web)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        /* 커스텀 스타일 및 재정의 */
+        body { font-family: 'Inter', sans-serif; background: #1f2937; color: #f9fafb; }
+        /* 스크롤바 커스텀 */
+        #chat-window::-webkit-scrollbar { width: 8px; }
+        #chat-window::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        #chat-window::-webkit-scrollbar-track { background: #374151; }
+        
+        .message { margin-bottom: 8px; line-height: 1.4; padding: 4px 0; word-wrap: break-word; }
+        .nickname { font-weight: bold; color: #6366f1; margin-right: 8px; }
+        
+        /* 챗봇 메시지: 하늘색, 배경색 */
+        .bot { color: #38bdf8; border-left: 3px solid #38bdf8; padding-left: 10px; background: #273040; border-radius: 4px; padding: 8px; white-space: pre-wrap; }
+        
+        /* 시스템 메시지: 노란색 */
+        .system { color: #fbbf24; font-style: italic; border-left: 3px solid #fbbf24; padding-left: 10px; }
+
+        /* 명령어 결과: 녹색 */
+        .command_result { color: #34d399; border-left: 3px solid #34d399; padding-left: 10px; background: #274030; border-radius: 4px; padding: 8px; white-space: pre-wrap; }
+        
+        /* 모바일 화면에서 사용자 목록 숨기기/보이기 */
+        @media (max-width: 767px) {
+            #user-list-container {
+                position: absolute;
+                top: 0;
+                right: 0;
+                bottom: 0;
+                width: 70%; /* 모바일에서 70% 너비 */
+                z-index: 10;
+                transform: translateX(100%);
+                transition: transform 0.3s ease-in-out;
+            }
+            #user-list-container.flex {
+                transform: translateX(0);
+            }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+    <div id="login-modal" class="fixed inset-0 bg-gray-900 bg-opacity-90 flex items-center justify-center z-20">
+        <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-md">
+            <h2 class="text-2xl font-bold text-indigo-400 mb-6 text-center">Gemini 멀티버스 채팅방 접속</h2>
+            <p id="login-status" class="text-red-400 mb-4 text-center hidden">❌ 서버 연결에 실패했습니다.</p>
+            <form id="login-form">
+                <div class="mb-4">
+                    <label for="nickname-input" class="block text-sm font-medium text-gray-300">닉네임</label>
+                    <input type="text" id="nickname-input" class="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" required minlength="3" maxlength="15" placeholder="3~15자 (Admin 사용 시 비밀번호 필요)">
+                </div>
+                <div class="mb-6">
+                    <label for="password-input" class="block text-sm font-medium text-gray-300">비밀번호 (Admin 전용)</label>
+                    <input type="password" id="password-input" class="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="Admin 접속 비밀번호">
+                </div>
+                <button type="submit" id="connect-button" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    접속하기
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div id="chat-container" class="flex flex-1 overflow-hidden hidden">
+        <div class="flex flex-col flex-1 overflow-hidden p-4">
+            <header class="flex items-center justify-between p-2 mb-4 border-b border-gray-700 md:hidden">
+                <h1 class="text-xl font-bold text-indigo-400">멀티버스 채팅방</h1>
+                <button id="toggle-user-list" class="text-gray-300 hover:text-indigo-400 p-2 rounded-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-5m0 5l-5-5M4 4h5V4m0 0l-5 5m0 5v5h5M4 20l5-5m5-5l5-5M19 4l-5 5"/></svg>
+                </button>
+            </header>
+            
+            <div id="chat-window" class="flex-1 overflow-y-auto bg-gray-800 p-4 rounded-lg shadow-inner mb-4">
+                </div>
+
+            <form id="message-form" class="flex gap-2">
+                <textarea id="message-input" rows="1" class="flex-1 p-3 bg-gray-700 border border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:text-sm" placeholder="메시지 또는 명령어를 입력하세요 (!명령어)" required oninput="this.style.height='40px'; this.style.height = (this.scrollHeight)+'px';"></textarea>
+                <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 whitespace-nowrap">
+                    전송
+                </button>
+            </form>
+        </div>
+
+        <div id="user-list-container" class="hidden md:flex md:flex-col bg-gray-900 w-64 p-4 border-l border-gray-700 md:relative absolute right-0 top-0 bottom-0 z-10">
+            <header class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-200">접속자 목록 (<span id="user-count">0</span>)</h2>
+                <button id="close-user-list" class="text-gray-400 hover:text-white md:hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </header>
+            <ul id="user-list" class="flex-1 overflow-y-auto space-y-2">
+                </ul>
+            <footer class="mt-4 pt-4 border-t border-gray-700">
+                <p id="my-nickname" class="text-sm font-medium text-indigo-400"></p>
+                <p class="text-xs text-gray-500 mt-1">**Admin** 접속 시 비밀번호 '123'</p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 클라이언트에서 서버의 포트 번호를 동적으로 가져와 연결
+            const socket = io('http://' + document.domain + ':5001');
+            const loginForm = document.getElementById('login-form');
+            const loginModal = document.getElementById('login-modal');
+            const chatContainer = document.getElementById('chat-container');
+            const messageForm = document.getElementById('message-form');
+            const messageInput = document.getElementById('message-input');
+            const userList = document.getElementById('user-list');
+            const userCountSpan = document.getElementById('user-count');
+            const myNicknameP = document.getElementById('my-nickname');
+            const userListContainer = document.getElementById('user-list-container');
+            const toggleButton = document.getElementById('toggle-user-list');
+            const closeButton = document.getElementById('close-user-list');
+
+            let currentNickname = ''; // 클라이언트의 현재 닉네임 저장
+
+            // 1. 닉네임 요청 수신 시 로그인 모달 표시
+            socket.on('request_nickname', () => {
+                loginModal.classList.remove('hidden');
+                chatContainer.classList.add('hidden');
+            });
+
+            // 2. 닉네임 등록 시도
+            if (loginForm) {
+                loginForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const nickname = document.getElementById('nickname-input').value.trim();
+                    const password = document.getElementById('password-input').value;
+                    
+                    if (nickname) {
+                        document.getElementById('connect-button').disabled = true;
+                        document.getElementById('connect-button').innerText = '접속 중...';
+                        
+                        socket.emit('register_nickname', {
+                            nickname: nickname,
+                            password: password
+                        });
+                    }
+                });
+            }
+
+            // 3. 닉네임 등록 성공
+            socket.on('registration_success', (data) => {
+                currentNickname = data.nickname;
+                loginModal.classList.add('hidden');
+                chatContainer.classList.remove('hidden');
+                messageInput.focus();
+                
+                // 내 닉네임 및 관리자 상태 표시
+                let nickText = data.nickname;
+                if (data.is_admin) {
+                    nickText = `👑 ${nickText} (Admin)`;
+                }
+                myNicknameP.innerText = `접속 닉네임: ${nickText}`;
+                
+                // 접속 성공 메시지
+                appendMessage('✅ 서버에 접속했습니다. 환영합니다!', 'system');
+                appendMessage('💬 **!명령어** 를 입력하여 사용 가능한 명령어를 확인해보세요.', 'system');
+            });
+
+            // 4. 닉네임 등록 실패
+            socket.on('registration_failure', (data) => {
+                const status = document.getElementById('login-status');
+                status.innerText = `❌ ${data.message}`;
+                status.classList.remove('hidden');
+                document.getElementById('connect-button').disabled = false;
+                document.getElementById('connect-button').innerText = '접속하기';
+            });
+
+            // 5. 메시지 수신 및 출력
+            socket.on('message', (data) => {
+                appendMessage(data.msg, data.type);
+            });
+            
+            // 6. 접속자 목록 업데이트
+            socket.on('update_users', (data) => {
+                userList.innerHTML = '';
+                userCountSpan.innerText = data.users.length;
+                data.users.forEach(text => {
+                    const li = document.createElement('li');
+                    li.className = 'text-sm p-1 rounded hover:bg-gray-800';
+                    li.innerText = text;
+                    userList.appendChild(li);
+                });
+            });
+
+            // 7. 메시지 전송
+            if (messageForm) {
+                messageForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const msg = messageInput.value.trim();
+                    if (msg) {
+                        socket.emit('message', { msg: msg });
+                        messageInput.value = '';
+                        messageInput.style.height = '40px'; // 높이 초기화
+                    }
+                });
+            }
+
+            // 8. 강제 연결 해제 (Admin 추방 등)
+            socket.on('force_disconnect', () => {
+                socket.disconnect();
+                appendMessage('🚨 서버 관리자에 의해 연결이 강제 종료되었습니다.', 'system');
+                loginModal.classList.remove('hidden');
+                chatContainer.classList.add('hidden');
+            });
+
+            // 9. 메시지를 채팅 창에 추가하는 함수
+            function appendMessage(message, type='general') {
+                const window = document.getElementById('chat-window');
+                const div = document.createElement('div');
+                div.className = 'message ' + type;
+
+                if (type === 'general' || type === 'system') {
+                    // 일반/시스템 메시지는 HTML 태그를 해석하고 줄 바꿈을 <br>로 처리
+                    // (일반 메시지의 닉네임 태그 처리를 위해 innerHTML 사용)
+                    div.innerHTML = message.replace(/\n/g, '<br>'); 
+                } else {
+                    // 명령어 결과나 챗봇 메시지는 pre-wrap CSS를 사용하기 위해 innerText로 안전하게 삽입
+                    // 대신 줄 바꿈(
+)이 그대로 유지되도록 CSS (white-space: pre-wrap)를 사용함.
+                    div.innerText = message;
+                }
+
+                window.appendChild(div);
+                // 스크롤을 항상 최하단으로 내립니다.
+                window.scrollTop = window.scrollHeight;
+            }
+            
+            // 10. 텍스트 영역 자동 크기 조절 및 엔터 전송 처리
+            // 자동 크기 조절은 input 이벤트에 inline으로 처리했습니다.
+            if (messageInput) {
+                // 엔터 키 입력 시 전송 (Shift + Enter는 줄 바꿈)
+                messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        messageForm.dispatchEvent(new Event('submit'));
+                    }
+                });
+            }
+            
+            // 11. 모바일 사용자 목록 토글 기능
+            // 미디엄 사이즈(md) 미만에서만 토글 작동
+            if (window.innerWidth < 768) {
+                // 초기 상태: 모바일에서는 사용자 목록 숨김
+                userListContainer.classList.add('hidden');
+                userListContainer.classList.remove('flex');
+
+                if (toggleButton) {
+                    toggleButton.addEventListener('click', () => {
+                        userListContainer.classList.toggle('hidden');
+                        userListContainer.classList.toggle('flex');
+                    });
+                }
+                if (closeButton) {
+                    closeButton.addEventListener('click', () => {
+                        userListContainer.classList.add('hidden');
+                        userListContainer.classList.remove('flex');
+                    });
+                }
+            }
+            
+            // 12. 연결 해제 및 오류 처리
+            socket.on('disconnect', () => {
+                appendMessage('🚨 서버와 연결이 끊어졌습니다. 새로고침 후 다시 접속해 주세요.', 'system');
+            });
+            
+            socket.on('connect_error', (error) => {
+                document.getElementById('login-status').innerText = `❌ 서버 연결 오류: ${error.message}. 서버가 실행 중인지 확인하세요.`;
+                document.getElementById('login-status').classList.remove('hidden');
+                document.getElementById('connect-button').disabled = false;
+                document.getElementById('connect-button').innerText = '접속하기';
+            });
+
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Joyce 뇌절 통합 제국</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { background: #020617; color: #f1f5f9; transition: all 0.1s; }
+        #chat-window { height: 70vh; overflow-y: auto; scroll-behavior: smooth; border-radius: 2rem; }
+        .msg-item { white-space: pre-wrap; word-break: break-all; padding: 12px; border-bottom: 1px solid #0f172a; }
+        .rank-초월자 { color: #22d3ee !important; font-size: 1.8rem !important; text-shadow: 0 0 15px #22d3ee; font-weight: 900; }
+        .noejul-msg { color: #f0abfc; font-family: monospace; animation: shake 0.1s infinite; }
+        @keyframes shake { 0% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } }
+        .noejul-bg { animation: flash 0.5s infinite; }
+        @keyframes flash { 0% { background: #020617; } 50% { background: #1e1b4b; } }
+    </style>
+</head>
+<body class="p-4">
+    <div class="max-w-6xl mx-auto">
+        <div id="chat-window" class="bg-black/70 p-6 mb-4 border border-gray-800 shadow-2xl"></div>
+        <div class="bg-gray-900 p-6 rounded-3xl border border-gray-800 shadow-2xl">
+            <textarea id="user-input" class="w-full p-4 bg-black rounded-2xl mb-4 h-24 text-white border border-gray-800" placeholder="!무한뇌절, !뇌절중단, !저금, !출금, !gemini 등..."></textarea>
+            <div class="flex gap-4">
+                <button onclick="document.getElementById('file-btn').click()" class="bg-gray-800 hover:bg-gray-700 px-6 py-4 rounded-2xl">📁</button>
+                <input type="file" id="file-btn" class="hidden" onchange="uploadFile()">
+                <button onclick="send()" class="flex-1 bg-cyan-600 hover:bg-cyan-500 py-4 rounded-2xl font-black text-white">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const nick = prompt("칭호를 입력하세요", "Joyce") || "Joyce";
+        socket.emit('join', {nickname: nick});
+
+        socket.on('message', (data) => {
+            const win = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = 'msg-item';
+            
+            if (data.type === 'noejul') {
+                div.innerHTML = `<span class="noejul-msg">🌀 ${data.nickname}: ${data.msg}</span>`;
+                document.body.classList.add('noejul-bg');
+                setTimeout(() => document.body.classList.remove('noejul-bg'), 1000);
+            } else if (data.type === 'chat') {
+                let prefix = data.rank === '초월자' ? '💎💎 ' : '';
+                div.innerHTML = `<span class="text-gray-400 font-bold">${data.nickname}:</span> <span class="rank-${data.rank}">${prefix}${data.msg}</span>`;
+            } else if (data.type === 'bot') {
+                div.innerHTML = `<div class="bg-blue-900/30 p-4 rounded-xl text-blue-300">🤖 ${data.msg}</div>`;
+            } else {
+                div.innerHTML = `<div class="text-gray-500 italic">${data.msg}</div>`;
+            }
+            win.appendChild(div);
+            win.scrollTop = win.scrollHeight;
+        });
+
+        function send() {
+            const input = document.getElementById('user-input');
+            if(input.value.trim()) {
+                socket.emit('send_msg', {nickname: nick, msg: input.value});
+                input.value = '';
+            }
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('file-btn');
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('nickname', nick);
+            await fetch('/upload', { method: 'POST', body: formData });
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>
