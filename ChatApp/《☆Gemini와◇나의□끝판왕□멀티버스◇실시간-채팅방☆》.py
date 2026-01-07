@@ -1,26 +1,20 @@
-import sqlite3
-import os
-import time
-import threading
-import random
-from flask import Flask, render_template, request, send_from_directory, url_for
+import sqlite3, os, time, threading, random
+from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit, join_room
 from werkzeug.utils import secure_filename
 
-# --- [환경 설정] ---
+# --- [설정 및 DB] ---
 PORT = 5001
 UPLOAD_FOLDER = 'uploads'
-DB_FILE = "multiverse_empire_ultimate.sqlite"
-
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+DB_FILE = "multiverse_ultimate_empire.sqlite"
+if not os.path.exists(UPLOAD_FOLDER): os.makedirs(UPLOAD_FOLDER)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
+crypto_prices = {"비트코인": 50000000}
 noejul_loops = {}
-crypto_prices = {"비트코인": 50000000} 
 
 # Gemini AI 로드
 client = None
@@ -30,198 +24,192 @@ try:
     if api_key: client = genai.Client(api_key=api_key)
 except: pass
 
-# --- [DB 시스템: 영구 보존] ---
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                nickname TEXT PRIMARY KEY, 
-                money INTEGER DEFAULT 1000, 
-                bank_money INTEGER DEFAULT 0,
-                btc_amount REAL DEFAULT 0
-            )
-        """)
-        # 채팅 기록 보존 테이블
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nickname TEXT,
-                msg TEXT,
-                type TEXT,
-                rank TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
+        conn.execute("CREATE TABLE IF NOT EXISTS users (nickname TEXT PRIMARY KEY, money INTEGER DEFAULT 1000, bank_money INTEGER DEFAULT 0, btc_amount REAL DEFAULT 0)")
+        conn.execute("CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, nickname TEXT, msg TEXT, type TEXT, rank TEXT, time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+init_db()
 
 def get_user(nick):
     with sqlite3.connect(DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
-        conn.execute("INSERT OR IGNORE INTO users (nickname) VALUES (?)", (nick,))
-        return conn.execute("SELECT * FROM users WHERE nickname=?", (nick,)).fetchone()
+        u = conn.execute("SELECT * FROM users WHERE nickname = ?", (nick,)).fetchone()
+        if not u:
+            conn.execute("INSERT INTO users (nickname) VALUES (?)", (nick,))
+            u = conn.execute("SELECT * FROM users WHERE nickname = ?", (nick,)).fetchone()
+        return dict(u)
 
-def update_db(nick, col, amount):
+def update_db(nick, field, amount):
     with sqlite3.connect(DB_FILE) as conn:
-        conn.execute(f"UPDATE users SET {col} = {col} + ? WHERE nickname = ?", (amount, nick))
-        conn.commit()
+        conn.execute(f"UPDATE users SET {field} = {field} + ? WHERE nickname = ?", (amount, nick))
 
-# [실시간 경제 시스템: 뉴스 및 시세 변동]
-def background_scheduler():
+def broadcast_news(msg):
+    """실시간 제국 속보를 전송합니다."""
+    socketio.emit('message', {'msg': f"🚨 [제국 속보] {msg}", 'type': 'system'}, room='main')
+
+# 수정된 배경 엔진 로직
+def empire_background_engine():
     global crypto_prices
     while True:
-        time.sleep(60) 
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("UPDATE users SET bank_money = CAST(bank_money * 1.01 AS INTEGER) WHERE bank_money > 0")
-            conn.commit()
-        
-        crypto_prices["비트코인"] = int(crypto_prices["비트코인"] * random.uniform(0.90, 1.15))
-        news = f"📰 [제국 경제 뉴스] 비트코인 현재가: {crypto_prices['비트코인']:,}₩ | 은행 이자 1% 지급 완료!"
-        socketio.emit('message', {'msg': news, 'type': 'system'}, room='main')
+        time.sleep(60)
+        try:
+            with sqlite3.connect(DB_FILE, timeout=10) as conn: # timeout 추가
+                # 1. 비트코인 시세 변동
+                change = random.uniform(0.95, 1.05)
+                crypto_prices["비트코인"] = int(crypto_prices["비트코인"] * change)
+                
+                # 2. 은행 이자 '돈 복사' (일괄 업데이트로 속도 향상)
+                conn.execute("UPDATE users SET money = money + CAST(bank_money * 0.001 AS INTEGER) WHERE bank_money > 0")
+                conn.commit()
+                
+                # 3. 실시간 전송
+                socketio.emit('price_update', {'btc': crypto_prices["비트코인"]}, room='main')
+                
+                if change > 1.04:
+                    broadcast_news(f"📈 비트코인 폭등! 현재가: {crypto_prices['비트코인']:,}₩")
+                elif change < 0.96:
+                    broadcast_news(f"📉 비트코인 대폭락! 현재가: {crypto_prices['비트코인']:,}₩")
+        except Exception as e:
+            print(f"Engine Error: {e}")
 
-# --- [로직 처리] ---
+threading.Thread(target=empire_background_engine, daemon=True).start()
+
 @app.route('/')
 def index(): return render_template('index.html')
 
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    file = request.files.get('file'); nick = request.form.get('nickname', 'Unknown')
-    if file:
-        uname = f"{int(time.time())}_{secure_filename(file.filename)}"
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], uname))
-        url = url_for('download_file', filename=uname, _external=True)
-        msg = f"📂 {nick}님이 파일을 공유했습니다: {url}"
-        socketio.emit('message', {'msg': msg, 'type': 'system'}, room='main')
-        return 'OK'
-    return 'Fail', 400
+@app.route('/uploads/<path:filename>')
+def download(filename): return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-@app.route('/uploads/<filename>')
-def download_file(filename): return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+@app.route('/upload', methods=['POST'])
+def upload():
+    file = request.files.get('file'); nick = request.form.get('nickname', '익명')
+    if file:
+        fname = f"{int(time.time())}_{secure_filename(file.filename)}"
+        path = os.path.join(app.config['UPLOAD_FOLDER'], fname)
+        file.save(path)
+        reward = 10000 + (os.path.getsize(path) // 5)
+        update_db(nick, "money", reward)
+        if reward >= 50000:
+            broadcast_news(f"{nick}님이 귀중한 파일을 공유하여 {reward:,}₩의 거액을 하사받았습니다!")
+        f_url = f"{request.host_url.rstrip('/')}/uploads/{fname}"
+        msg = f"📁 [파일 공유] {file.filename}\n🔗 다운로드: {f_url}"
+        socketio.emit('message', {'nickname': nick, 'msg': msg, 'type': 'chat', 'rank': '시스템', 'reward': f"+{reward:,}₩"}, room='main')
+    return '', 204
 
 @socketio.on('join')
-def on_join(data):
+def on_join(d):
     join_room('main')
-    # 이전 채팅 기록 불러오기
     with sqlite3.connect(DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
-        logs = conn.execute("SELECT * FROM (SELECT * FROM chats ORDER BY id DESC LIMIT 20) ORDER BY id ASC").fetchall()
-        for log in logs:
-            emit('message', {'nickname': log['nickname'], 'msg': log['msg'], 'type': log['type'], 'rank': log['rank']})
-    emit('message', {'msg': f"🚀 {data['nickname']}님이 제국에 접속했습니다!", 'type': 'system'}, room='main')
+        for h in reversed(conn.execute("SELECT * FROM chats ORDER BY id DESC LIMIT 100").fetchall()):
+            emit('message', {'nickname': h['nickname'], 'msg': h['msg'], 'type': h['type'], 'rank': h['rank']})
 
 @socketio.on('send_msg')
 def handle_msg(data):
-    nick = data['nickname']; msg = data['msg'].strip()
-    if not msg: return
-    user = get_user(nick); msg_len = len(msg)
+    nick, raw = data['nickname'], data['msg'].strip()
+    if not raw: return
     
-    # [수익 로직] 메시지 길이에 따른 자동 ₩ 적립
-    reward = 100 + (msg_len * 5) 
-    update_db(nick, "money", reward)
+    # 보상 계산
+    if len(raw) > 500:
+        fname = f"msg_{int(time.time())}.txt"
+        path = os.path.join(UPLOAD_FOLDER, fname)
+        with open(path, "w", encoding="utf-8") as f: f.write(raw)
+        reward = len(raw) * 100 
+        update_db(nick, "money", reward)
+        raw = f"📄 대용량 메시지 감지 (파일 변환)\n🔗 다운로드: {request.host_url.rstrip('/')}/uploads/{fname}"
+    else:
+        reward = len(raw) * 50
+        update_db(nick, "money", reward)
 
-    display_msg = msg
-    if msg_len > 1000: # 대용량 메시지 처리
-        filename = f"LARGE_{int(time.time())}_{nick}.txt"
-        with open(os.path.join(UPLOAD_FOLDER, filename), "w", encoding="utf-8") as f: f.write(msg)
-        link = url_for('download_file', filename=filename, _external=True)
-        display_msg = f"📄 [대용량 데이터] 길이: {msg_len}자 | 적립: {reward:,}₩\n🔗 링크: {link}"
+    if reward >= 100000:
+        broadcast_news(f"현재 {nick}님이 대용량 메시지 전송으로 {reward:,}₩의 막대한 부를 쌓고 있습니다!")
 
-    parts = msg.split()
-    cmd = parts[0].lower() if msg.startswith("!") else ""
+    u = get_user(nick)
+    parts = raw.split(); cmd = parts[0]
 
-    # [명령어 시스템 통합]
     if cmd == "!잔액":
-        btc_val = int(user['btc_amount'] * crypto_prices['비트코인'])
-        total = user['money'] + user['bank_money'] + btc_val
-        res = (f"💰 {nick}님의 자산 보고서\n"
-               f"💵 현금: {user['money']:,}₩\n"
-               f"🏦 은행: {user['bank_money']:,}₩\n"
-               f"🪙 비트코인 가치: {btc_val:,}₩\n"
-               f"💳 총합 자산: {total:,}₩")
+        btc_v = int(u['btc_amount'] * crypto_prices['비트코인'])
+        total = u['money'] + u['bank_money'] + btc_v
+        res = f"💰 {nick}님 자산\n💵 현금: {u['money']:,}₩\n🏦 은행: {u['bank_money']:,}₩\n🪙 코인: {btc_v:,}₩\n💳 총액: {total:,}₩"
         emit('message', {'msg': res, 'type': 'system'})
-
-    elif cmd == "!저금":
-        try:
-            amt = int(parts[1])
-            if user['money'] >= amt:
-                update_db(nick, "money", -amt); update_db(nick, "bank_money", amt)
-                emit('message', {'msg': f"🏦 {amt:,}₩ 저금 완료!", 'type': 'system'})
-        except: pass
-
-    elif cmd == "!출금":
-        try:
-            amt = int(parts[1])
-            if user['bank_money'] >= amt:
-                update_db(nick, "money", amt); update_db(nick, "bank_money", -amt)
-                emit('message', {'msg': f"🏧 {amt:,}₩ 출금 완료!", 'type': 'system'})
-        except: pass
-
-    elif cmd == "!가위바위보":
-        try:
-            choice = parts[1]; bet = int(parts[2])
-            if user['money'] >= bet:
-                com = random.choice(["가위", "바위", "보"])
-                if choice == com: result = "무승부"; update_db(nick, "money", 0)
-                elif (choice=="가위" and com=="보") or (choice=="바위" and com=="가위") or (choice=="보" and com=="바위"):
-                    result = "승리"; update_db(nick, "money", bet)
-                else: result = "패배"; update_db(nick, "money", -bet)
-                emit('message', {'msg': f"🎮 결과: 나({choice}) vs 컴({com}) -> {result}!", 'type': 'system'})
-        except: pass
-
-    elif cmd == "!매수":
-        try:
-            amt = int(parts[2])
-            if user['money'] >= amt:
-                qty = amt / crypto_prices['비트코인']
-                update_db(nick, "money", -amt); update_db(nick, "btc_amount", qty)
-                emit('message', {'msg': f"📉 비트코인 {qty:.6f}개 매수 성공!", 'type': 'system'})
-        except: pass
-
+    
+    # --- [!랭킹 기능 추가] ---
     elif cmd == "!랭킹":
         with sqlite3.connect(DB_FILE) as conn:
-            # 여기에도 btc_amount * 현재시세 로직을 태워야 합니다!
-            price = crypto_prices['비트코인']
-            rows = conn.execute(f"SELECT nickname, (money + bank_money + CAST(btc_amount * {price} AS INTEGER)) as total FROM users ORDER BY total DESC LIMIT 10").fetchall()
-            res = "🏆 [제국 부자 순위]\n" + "\n".join([f"{i+1}위: {r[0]} ({r[1]:,}₩)" for i, r in enumerate(rows)])
-            emit('message', {'msg': res, 'type': 'system'})
+            conn.row_factory = sqlite3.Row
+            users = conn.execute("SELECT * FROM users").fetchall()
+            
+            rank_list = []
+            btc_p = crypto_prices['비트코인']
+            for row in users:
+                total = row['money'] + row['bank_money'] + int(row['btc_amount'] * btc_p)
+                rank_list.append({'nick': row['nickname'], 'total': total})
+            
+            # 자산 순으로 내림차순 정렬
+            rank_list.sort(key=lambda x: x['total'], reverse=True)
+            
+            top_msg = "🏆 [제국 자산 랭킹 TOP 5]\n"
+            for i, r in enumerate(rank_list[:5], 1):
+                medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else "🎖️"
+                top_msg += f"{medal} {i}위: {r['nick']} ({r['total']:,}₩)\n"
+            
+            # 랭킹은 모든 사용자가 볼 수 있게 전송
+            socketio.emit('message', {'msg': top_msg, 'type': 'system'}, room='main')
 
-    elif cmd in ["!뇌절", "!무한뇌절"]:
+    elif cmd == "!저금":
+        amt = int(parts[1]) if len(parts)>1 else u['money']
+        if u['money'] >= amt: update_db(nick, "money", -amt); update_db(nick, "bank_money", amt); emit('message', {'msg': f"🏦 {amt:,}₩ 저금됨", 'type': 'system'})
+    elif cmd == "!출금":
+        amt = int(parts[1]) if len(parts)>1 else u['bank_money']
+        if u['bank_money'] >= amt: update_db(nick, "bank_money", -amt); update_db(nick, "money", amt); emit('message', {'msg': f"💸 {amt:,}₩ 출금됨", 'type': 'system'})
+    elif cmd == "!매수" and len(parts)>2:
+        amt = int(parts[2])
+        if u['money'] >= amt:
+            btc_add = amt / crypto_prices['비트코인']
+            update_db(nick, "money", -amt); update_db(nick, "btc_amount", btc_add)
+            emit('message', {'msg': f"🪙 비트코인 {btc_add:.8f}개 매수완료", 'type': 'system'})
+            if amt >= 10000000:
+                broadcast_news(f"시장 요동! {nick}님이 비트코인을 {btc_add:.4f}개 쓸어담으며 '큰 손'으로 등극했습니다!")
+    elif cmd == "!가위바위보" and len(parts)>2:
+        pick, amt = parts[1], int(parts[2])
+        if u['money'] >= amt:
+            bot = random.choice(["가위", "바위", "보"])
+            if pick == bot: res = "무승부"
+            elif (pick=="가위" and bot=="보") or (pick=="바위" and bot=="가위") or (pick=="보" and bot=="바위"):
+                update_db(nick, "money", amt); res = f"승리! (+{amt:,}₩)"
+            else: update_db(nick, "money", -amt); res = f"패배... (-{amt:,}₩)"
+            emit('message', {'msg': f"🎮 {pick} vs {bot} -> {res}", 'type': 'system'})
+            if amt >= 1000000:
+                if "승리" in res: broadcast_news(f"대박! {nick}님이 가위바위보 한 판으로 {amt:,}₩을 벌어들였습니다!")
+                elif "패배" in res: broadcast_news(f"충격! {nick}님이 가위바위보 도박으로 {amt:,}₩을 탕진했습니다.")
+    elif cmd == "!무한뇌절":
+        if noejul_loops.get(nick): return
         noejul_loops[nick] = True
-        def noejul_task(n):
-            while noejul_loops.get(n):
-                update_db(n, "bank_money", 5000)
-                socketio.emit('message', {'nickname': n, 'msg': "🌀 뇌절 채굴 중... (+5,000₩)", 'type': 'noejul'}, room='main')
+        def task():
+            while noejul_loops.get(nick):
+                update_db(nick, "money", 5000)
+                socketio.emit('message', {'nickname': nick, 'msg': "🌀 뇌절 적립중...", 'type': 'noejul'}, room='main')
+                if random.random() < 0.1:
+                    broadcast_news(f"{nick}님이 멈추지 않는 '무한 뇌절'로 시장 경제를 뒤흔들고 있습니다!")
                 time.sleep(2)
-        threading.Thread(target=noejul_task, args=(nick,), daemon=True).start()
-
-    elif cmd in ["!뇌절정지", "!뇌절중단"]:
-        noejul_loops[nick] = False
-
+        threading.Thread(target=task, daemon=True).start()
+    elif cmd in ["!뇌절정지", "!뇌절중단"]: noejul_loops[nick] = False
     elif cmd == "!gemini" and client:
         try:
             res = client.models.generate_content(model="gemini-2.0-flash", contents=" ".join(parts[1:]))
             socketio.emit('message', {'msg': f"🤖 Gemini: {res.text}", 'type': 'bot'}, room='main')
         except: pass
-
     elif cmd == "!명령어":
-        emit('message', {'msg': "!잔액, !저금 [금액], !출금 [금액], !랭킹, !가위바위보 [패] [금액], !매수 비트코인 [금액], !무한뇌절, !뇌절중단, !gemini [질문]", 'type': 'system'})
-
+        emit('message', {'msg': "!잔액, !랭킹, !저금 [금액], !출금 [금액], !가위바위보 [패] [금액], !매수 비트코인 [금액], !무한뇌절, !뇌절중단, !gemini [질문]", 'type': 'system'})
     else:
-        # 비트코인 현재 가치를 계산합니다 (개수 * 시세)
-        btc_val = int(user['btc_amount'] * crypto_prices['비트코인'])
-        
-        # 현금 + 은행잔고 + 비트코인 가치를 모두 합산합니다
-        total = user['money'] + user['bank_money'] + btc_val
-        
-        # 합산된 금액을 기준으로 등급을 판정합니다
-        rank = "초월자" if total >= 10000000 else "VIP" if total >= 1000000 else "평민"
-        # DB에 채팅 기록 저장
+        btc_v = int(u['btc_amount'] * crypto_prices['비트코인'])
+        total = u['money'] + u['bank_money'] + btc_v
+        if total >= 200000000: rank = "멀티버스 지배자"
+        elif total >= 10000000: rank = "초월자"
+        else: rank = "평민"
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("INSERT INTO chats (nickname, msg, type, rank) VALUES (?, ?, ?, ?)", (nick, display_msg, 'chat', rank))
-        socketio.emit('message', {'nickname': nick, 'msg': display_msg, 'type': 'chat', 'rank': rank, 'reward': f"+{reward:,}₩"}, room='main')
+            conn.execute("INSERT INTO chats (nickname, msg, type, rank) VALUES (?, ?, ?, ?)", (nick, raw, 'chat', rank))
+        socketio.emit('message', {'nickname': nick, 'msg': raw, 'type': 'chat', 'rank': rank, 'reward': f"+{reward:,}₩"}, room='main')
 
 if __name__ == '__main__':
-    init_db()
-    threading.Thread(target=background_scheduler, daemon=True).start()
-    socketio.run(app, host='0.0.0.0', port=PORT, debug=False)
-
-
+    socketio.run(app, debug=True, port=PORT, host='0.0.0.0')
