@@ -1,2 +1,0 @@
-$env:GEMINI_API_KEY = "AIzaSyARZn1D1xN01MhpN17fKH1BDFt9pg9uMfQ"
-python "《☆Gemini와◇나의□끝판왕□멀티버스◇실시간-채팅방☆》.py"
