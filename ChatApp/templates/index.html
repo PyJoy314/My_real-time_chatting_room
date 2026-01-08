@@ -206,12 +206,14 @@
     const chat = document.getElementById('chat');
     const div = document.createElement('div');
     const isMaster = d.rank === '멀티버스 지배자';
-    const isMe = d.nickname === nick;
+    const isMe = d.nickname === nick; // 현재 접속한 '나'인지 확인
 
-    // 3번 기능: 지배자의 자산 정보 실시간 티커 업데이트
-    if (d.nickname === 'Joyce' && d.total_asset) {
+    // [수정] 내 메시지에 대한 응답이거나, 나에게 온 시스템 메시지에 자산 정보가 있다면 업데이트
+    if (isMe && d.total_asset !== undefined) {
         const wealthEl = document.getElementById('total-wealth');
-        wealthEl.innerText = Number(d.total_asset).toLocaleString();
+        if (wealthEl) {
+            wealthEl.innerText = Number(d.total_asset).toLocaleString();
+        }
     }
 
     // 지배자 대화 또는 제국 속보 발생 시 화면 플래시 효과

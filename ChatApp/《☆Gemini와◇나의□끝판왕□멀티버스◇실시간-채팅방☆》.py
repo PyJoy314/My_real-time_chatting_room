@@ -106,10 +106,13 @@ def on_join(d):
 
 @socketio.on('send_msg')
 def handle_msg(data):
+    # 1. 기본 데이터 추출 및 유저 정보 로드
     nick, raw = data['nickname'], data['msg'].strip()
     if not raw: return
     
-    # 보상 계산
+    u = get_user(nick)
+    
+    # 2. 메시지 보상 계산 및 DB 업데이트
     if len(raw) > 500:
         fname = f"msg_{int(time.time())}.txt"
         path = os.path.join(UPLOAD_FOLDER, fname)
@@ -124,52 +127,62 @@ def handle_msg(data):
     if reward >= 100000:
         broadcast_news(f"현재 {nick}님이 대용량 메시지 전송으로 {reward:,}₩의 막대한 부를 쌓고 있습니다!")
 
+    # [중요] 보상 수령 후 최신 유저 정보와 자산 다시 계산
     u = get_user(nick)
-    parts = raw.split(); cmd = parts[0]
+    btc_v = int(u['btc_amount'] * crypto_prices['비트코인'])
+    total = u['money'] + u['bank_money'] + btc_v
 
-    if cmd == "!잔액":
-        btc_v = int(u['btc_amount'] * crypto_prices['비트코인'])
-        total = u['money'] + u['bank_money'] + btc_v
-        res = f"💰 {nick}님 자산\n💵 현금: {u['money']:,}₩\n🏦 은행: {u['bank_money']:,}₩\n🪙 코인: {btc_v:,}₩\n💳 총액: {total:,}₩"
-        emit('message', {'msg': res, 'type': 'system'})
+    parts = raw.split()
+    cmd = parts[0]
     
-    # --- [!랭킹 기능 추가] ---
+    # --- 명령어 처리부 ---
+    
+    if cmd == "!잔액":
+        res = f"💰 {nick}님 자산\n💵 현금: {u['money']:,}₩\n🏦 은행: {u['bank_money']:,}₩\n🪙 코인: {btc_v:,}₩\n💳 총액: {total:,}₩"
+        emit('message', {'msg': res, 'type': 'system', 'total_asset': total})
+    
     elif cmd == "!랭킹":
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             users = conn.execute("SELECT * FROM users").fetchall()
-            
             rank_list = []
-            btc_p = crypto_prices['비트코인']
             for row in users:
-                total = row['money'] + row['bank_money'] + int(row['btc_amount'] * btc_p)
-                rank_list.append({'nick': row['nickname'], 'total': total})
-            
-            # 자산 순으로 내림차순 정렬
+                t = row['money'] + row['bank_money'] + int(row['btc_amount'] * crypto_prices['비트코인'])
+                rank_list.append({'nick': row['nickname'], 'total': t})
             rank_list.sort(key=lambda x: x['total'], reverse=True)
-            
             top_msg = "🏆 [제국 자산 랭킹 TOP 5]\n"
             for i, r in enumerate(rank_list[:5], 1):
                 medal = "🥇" if i==1 else "🥈" if i==2 else "🥉" if i==3 else "🎖️"
                 top_msg += f"{medal} {i}위: {r['nick']} ({r['total']:,}₩)\n"
-            
-            # 랭킹은 모든 사용자가 볼 수 있게 전송
-            socketio.emit('message', {'msg': top_msg, 'type': 'system'}, room='main')
+            socketio.emit('message', {'msg': top_msg, 'type': 'system', 'total_asset': total}, room='main')
 
     elif cmd == "!저금":
         amt = int(parts[1]) if len(parts)>1 else u['money']
-        if u['money'] >= amt: update_db(nick, "money", -amt); update_db(nick, "bank_money", amt); emit('message', {'msg': f"🏦 {amt:,}₩ 저금됨", 'type': 'system'})
+        if u['money'] >= amt: 
+            update_db(nick, "money", -amt); update_db(nick, "bank_money", amt)
+            u = get_user(nick) # 업데이트 후 다시 로드
+            total = u['money'] + u['bank_money'] + btc_v
+            emit('message', {'msg': f"🏦 {amt:,}₩ 저금됨", 'type': 'system', 'total_asset': total})
+
     elif cmd == "!출금":
         amt = int(parts[1]) if len(parts)>1 else u['bank_money']
-        if u['bank_money'] >= amt: update_db(nick, "bank_money", -amt); update_db(nick, "money", amt); emit('message', {'msg': f"💸 {amt:,}₩ 출금됨", 'type': 'system'})
+        if u['bank_money'] >= amt: 
+            update_db(nick, "bank_money", -amt); update_db(nick, "money", amt)
+            u = get_user(nick)
+            total = u['money'] + u['bank_money'] + btc_v
+            emit('message', {'msg': f"💸 {amt:,}₩ 출금됨", 'type': 'system', 'total_asset': total})
+
     elif cmd == "!매수" and len(parts)>2:
         amt = int(parts[2])
         if u['money'] >= amt:
             btc_add = amt / crypto_prices['비트코인']
             update_db(nick, "money", -amt); update_db(nick, "btc_amount", btc_add)
-            emit('message', {'msg': f"🪙 비트코인 {btc_add:.8f}개 매수완료", 'type': 'system'})
+            u = get_user(nick)
+            total = u['money'] + u['bank_money'] + int(u['btc_amount'] * crypto_prices['비트코인'])
+            emit('message', {'msg': f"🪙 비트코인 {btc_add:.8f}개 매수완료", 'type': 'system', 'total_asset': total})
             if amt >= 10000000:
                 broadcast_news(f"시장 요동! {nick}님이 비트코인을 {btc_add:.4f}개 쓸어담으며 '큰 손'으로 등극했습니다!")
+
     elif cmd == "!가위바위보" and len(parts)>2:
         pick, amt = parts[1], int(parts[2])
         if u['money'] >= amt:
@@ -178,10 +191,10 @@ def handle_msg(data):
             elif (pick=="가위" and bot=="보") or (pick=="바위" and bot=="가위") or (pick=="보" and bot=="바위"):
                 update_db(nick, "money", amt); res = f"승리! (+{amt:,}₩)"
             else: update_db(nick, "money", -amt); res = f"패배... (-{amt:,}₩)"
-            emit('message', {'msg': f"🎮 {pick} vs {bot} -> {res}", 'type': 'system'})
-            if amt >= 1000000:
-                if "승리" in res: broadcast_news(f"대박! {nick}님이 가위바위보 한 판으로 {amt:,}₩을 벌어들였습니다!")
-                elif "패배" in res: broadcast_news(f"충격! {nick}님이 가위바위보 도박으로 {amt:,}₩을 탕진했습니다.")
+            u = get_user(nick)
+            total = u['money'] + u['bank_money'] + int(u['btc_amount'] * crypto_prices['비트코인'])
+            emit('message', {'msg': f"🎮 {pick} vs {bot} -> {res}", 'type': 'system', 'total_asset': total})
+
     elif cmd == "!무한뇌절":
         if noejul_loops.get(nick): return
         noejul_loops[nick] = True
@@ -193,23 +206,48 @@ def handle_msg(data):
                     broadcast_news(f"{nick}님이 멈추지 않는 '무한 뇌절'로 시장 경제를 뒤흔들고 있습니다!")
                 time.sleep(2)
         threading.Thread(target=task, daemon=True).start()
+
     elif cmd in ["!뇌절정지", "!뇌절중단"]: noejul_loops[nick] = False
-    elif cmd == "!gemini" and client:
-        try:
-            res = client.models.generate_content(model="gemini-2.0-flash", contents=" ".join(parts[1:]))
-            socketio.emit('message', {'msg': f"🤖 Gemini: {res.text}", 'type': 'bot'}, room='main')
-        except: pass
+
+    elif cmd == "!gemini":
+        prompt = " ".join(parts[1:])
+        if not prompt:
+            emit('message', {'msg': "🤖 질문을 입력해주세요!", 'type': 'system', 'total_asset': total})
+        elif client is None:
+            emit('message', {'msg': "⚠️ Gemini API가 연결되지 않았습니다.", 'type': 'system', 'total_asset': total})
+        else:
+            try:
+                res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+                socketio.emit('message', {
+                    'nickname': '🤖 Gemini AI', 
+                    'msg': res.text, 
+                    'type': 'bot', 
+                    'rank': '황실 책사'
+                }, room='main')
+            except Exception as e:
+                socketio.emit('message', {'msg': f"⚠️ Gemini 오류: {str(e)}", 'type': 'system'}, room='main')
+
     elif cmd == "!명령어":
-        emit('message', {'msg': "!잔액, !랭킹, !저금 [금액], !출금 [금액], !가위바위보 [패] [금액], !매수 비트코인 [금액], !무한뇌절, !뇌절중단, !gemini [질문]", 'type': 'system'})
+        emit('message', {'msg': "!잔액, !랭킹, !저금 [금액], !출금 [금액], !가위바위보 [패] [금액], !매수 비트코인 [금액], !무한뇌절, !뇌절중단, !gemini [질문]", 'type': 'system', 'total_asset': total})
+
+    # 4. 일반 채팅 메시지 처리 (중복 전송 버그 수정됨)
     else:
-        btc_v = int(u['btc_amount'] * crypto_prices['비트코인'])
-        total = u['money'] + u['bank_money'] + btc_v
         if total >= 200000000: rank = "멀티버스 지배자"
         elif total >= 10000000: rank = "초월자"
         else: rank = "평민"
+        
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute("INSERT INTO chats (nickname, msg, type, rank) VALUES (?, ?, ?, ?)", (nick, raw, 'chat', rank))
-        socketio.emit('message', {'nickname': nick, 'msg': raw, 'type': 'chat', 'rank': rank, 'reward': f"+{reward:,}₩"}, room='main')
-
+        
+        # [수정] 단 한 번만 전송하며 total_asset을 포함합니다.
+        socketio.emit('message', {
+            'nickname': nick, 
+            'msg': raw, 
+            'type': 'chat', 
+            'rank': rank, 
+            'reward': f"+{reward:,}₩",
+            'total_asset': total 
+        }, room='main')
+        
 if __name__ == '__main__':
     socketio.run(app, debug=True, port=PORT, host='0.0.0.0')
